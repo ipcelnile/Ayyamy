@@ -1235,7 +1235,17 @@ function getDays(){try{return JSON.parse(localStorage.getItem('habitPinkDays')||
 function setSyncState(k){
   var el=document.getElementById('syncState');if(!el)return;
   var m={ok:['☁️','متزامن مع حسابك ✔'],busy:['🔄','جاري المزامنة...'],err:['⚠️','تعذّرت المزامنة — البيانات محفوظة على الجهاز'],local:['📴','محفوظ على هذا الجهاز فقط'],login:['🔑','اضغط هنا لتسجيل الدخول بجوجل وتفعيل المزامنة']}[k]||['',''];
-  el.textContent=' '+m[0];el.title=m[1];el.dataset.msg=m[1];
+  el.textContent=' '+m[0]+(k==='login'?' سجّل دخول':'');el.title=m[1];el.dataset.msg=m[1];
+  el.style.cssText='cursor:pointer;'+(k==='login'?'background:#d6267a;color:#fff;padding:2px 9px;border-radius:10px;margin-inline-start:6px;font-weight:800':'');
+  var bn=document.getElementById('loginBanner');
+  if(k==='login'){
+    if(!bn){
+      bn=document.createElement('div');bn.id='loginBanner';bn.className='glass';
+      bn.style.cssText='padding:14px;margin-bottom:14px;text-align:center';
+      bn.innerHTML='<div style="font-weight:900;color:var(--deep);margin-bottom:4px">☁️ فعّل المزامنة والنسخ الاحتياطي</div><div style="font-size:12px;color:var(--dim);font-weight:700;margin-bottom:10px">سجّل دخول بجوجل عشان بياناتك وصورك تتحفظ وتظهر على كل أجهزتك</div><button class="btn" style="padding:11px" onclick="fbLogin()">🔑 تسجيل الدخول بجوجل</button>';
+      document.querySelector('header').insertAdjacentElement('afterend',bn);
+    }
+  }else if(bn){bn.remove()}
 }
 function buildDocs(){
   var docs={},log=getLogRaw(),hist=getHist(),lm={},hm={};
@@ -1347,11 +1357,36 @@ function startSync(col,pcol){
     try{var s2=await col.get();onRemoteDocs(s2.docs);SYNC.ready=true;pushAll()}catch(e){setSyncState('err')}
   },10000);
 }
+function loginError(e){
+  var code=(e&&e.code)||'unknown';
+  var hints={
+    'auth/unauthorized-domain':'الدومين مش مضاف في Firebase ← Authentication ← Settings ← Authorized domains (اكتب ipcelnile.github.io)',
+    'auth/operation-not-allowed':'تسجيل جوجل مش مفعّل في Firebase ← Authentication ← Sign-in method ← Google (Enable ثم Save)',
+    'auth/network-request-failed':'مشكلة في الإنترنت، جرّب تاني',
+    'auth/invalid-api-key':'مفتاح Firebase في الملف غلط',
+    'auth/api-key-not-valid.-please-pass-a-valid-api-key.':'مفتاح Firebase في الملف غلط',
+    'auth/web-storage-unsupported':'المتصفح بيمنع التخزين، افتحه من كروم عادي (مش وضع التخفي)',
+    'auth/internal-error':'خطأ داخلي في Firebase، تأكد إن Authentication مفعّل (Get started)'
+  };
+  var msg=hints[code]||'سبب غير معروف';
+  console.error('login error',e);
+  var bn=document.getElementById('loginBanner');
+  if(bn){
+    var er=document.getElementById('loginErr');
+    if(!er){er=document.createElement('div');er.id='loginErr';er.style.cssText='margin-top:10px;padding:10px;border-radius:12px;background:#fff1f2;color:#be123c;font-size:12px;font-weight:800;line-height:1.7;direction:rtl;text-align:right';bn.appendChild(er)}
+    er.innerHTML='⚠️ '+msg+'<br><span style="direction:ltr;display:inline-block;opacity:.8">'+code+'</span>';
+  }
+  toast('⚠️ '+msg);
+}
 function fbLogin(){
   var pr=new firebase.auth.GoogleAuthProvider();
   firebase.auth().signInWithPopup(pr).catch(function(e){
-    if(e&&(e.code==='auth/popup-blocked'||e.code==='auth/operation-not-supported-in-this-environment'))firebase.auth().signInWithRedirect(pr);
-    else if(e&&e.code!=='auth/popup-closed-by-user')toast('⚠️ تعذّر تسجيل الدخول — افتح الرابط من كروم أو سفاري');
+    var c=e&&e.code;
+    if(c==='auth/popup-closed-by-user'||c==='auth/cancelled-popup-request')return;
+    if(c==='auth/popup-blocked'||c==='auth/operation-not-supported-in-this-environment'){
+      firebase.auth().signInWithRedirect(pr).catch(loginError);return;
+    }
+    loginError(e);
   });
 }
 async function initFirebaseSync(){
@@ -1364,6 +1399,7 @@ async function initFirebaseSync(){
       await loadScript(base+'firebase-firestore-compat.js');
     }
     firebase.initializeApp(FIREBASE_CONFIG);
+    try{firebase.auth().getRedirectResult().catch(loginError)}catch(e){}
     var fs=firebase.firestore();
     setSyncState('busy');
     firebase.auth().onAuthStateChanged(function(u){
